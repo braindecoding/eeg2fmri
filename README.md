@@ -35,19 +35,21 @@ cortexflow-eeg-adapter/
 ├── train_ntvit.py                # NT-ViT training pipeline
 ├── ntvit_to_cortexflow.py        # CortexFlow adapter converter
 ├── verify_cortexflow.py          # Data validation script
+├── generate_full_samples.py      # Full dataset sample generator
 ├── requirements.txt              # Python dependencies
+├── RESEARCH_CONTRIBUTIONS.md     # Academic documentation
 ├── datasets/                     # Input datasets
 │   ├── EP1.01.txt               # MindBigData EEG data
 │   ├── S01.mat                  # Crell EEG data
 │   ├── MindbigdataStimuli/      # Digit stimuli (0.jpg - 9.jpg)
 │   └── crellStimuli/            # Letter stimuli (a.png, d.png, etc.)
 ├── ntvit_outputs/               # NT-ViT generated outputs
-│   ├── ntvit_*.pth             # Trained model weights
-│   ├── *_synthetic_fmri_*.npy  # Synthetic fMRI data
-│   └── *.json                  # Metadata files
+│   ├── ntvit_*_final.pth       # Trained model weights
+│   ├── *_synthetic_fmri_000-049.npy  # Full synthetic fMRI samples (100 total)
+│   └── *_synthetic_fmri_000-049.json # Metadata for each sample
 ├── cortexflow_data/            # CortexFlow-compatible outputs
-│   ├── mindbigdata.mat         # MindBigData for CortexFlow
-│   └── crell.mat               # Crell for CortexFlow
+│   ├── mindbigdata.mat         # MindBigData for CortexFlow (50 samples)
+│   └── crell.mat               # Crell for CortexFlow (50 samples)
 └── README.md                    # This file
 ```
 
@@ -137,7 +139,24 @@ datasets/
 wsl python train_ntvit.py
 ```
 
-### **Step 3: Monitor Training**
+**Expected Output:**
+- Training progress for 20 epochs
+- Model checkpoints saved at epochs 10, 20, and final
+- Loss convergence (MindBigData: ~0.44, Crell: ~0.36)
+- **100 synthetic fMRI samples generated** (50 per dataset, 000-049)
+
+### **Step 3: Generate Additional Samples (Optional)**
+```bash
+# Generate more samples from trained models using real EEG data
+wsl python generate_full_samples.py
+```
+
+**Output:**
+- Uses trained NT-ViT models to generate synthetic fMRI from real EEG
+- Creates 100 samples total (50 MindBigData + 50 Crell)
+- Each sample includes .npy (fMRI data) + .json (metadata)
+
+### **Step 4: Monitor Training**
 ```
 🧠 NT-ViT Training Pipeline
 ==================================================
@@ -241,11 +260,16 @@ print(f"Shape: {synthetic_fmri.shape}")  # (15724,)
 
 ## � **CortexFlow Integration**
 
-### **Convert to CortexFlow Format**
+### **Step 5: Convert to CortexFlow Format**
 ```bash
 # Generate CortexFlow-compatible MATLAB files
 wsl python ntvit_to_cortexflow.py
 ```
+
+**Output:**
+- Creates `cortexflow_data/mindbigdata.mat` and `cortexflow_data/crell.mat`
+- Each file contains 50 samples (40 train + 10 test)
+- All stimuli represented in test set for comprehensive evaluation
 
 ### **Generated CortexFlow Datasets**
 
@@ -256,8 +280,8 @@ wsl python ntvit_to_cortexflow.py
 📈 stimTrn: (40, 784) - uint8 (28×28 grayscale images)
 📈 fmriTest: (10, 3092) - float64
 📈 stimTest: (10, 784) - uint8
-📈 labelTrn: (40, 1) - uint8 (digits 0,1,2,3,4,5,6,7)
-📈 labelTest: (10, 1) - uint8 (digits 8,9)
+📈 labelTrn: (40, 1) - uint8 (digits 0,1,2,3,4,5,6,7,8,9)
+📈 labelTest: (10, 1) - uint8 (digits 0,1,2,3,4,5,6,7,8,9)
 ```
 
 **Crell Dataset (crell.mat):**
@@ -267,8 +291,8 @@ wsl python ntvit_to_cortexflow.py
 📈 stimTrn: (40, 784) - uint8 (28×28 grayscale images)
 📈 fmriTest: (10, 3092) - float64
 📈 stimTest: (10, 784) - uint8
-📈 labelTrn: (40, 1) - uint8 (letters a,d,e,f,j,n,o,s → 1-8)
-📈 labelTest: (10, 1) - uint8 (letters t,v → 9,10)
+📈 labelTrn: (40, 1) - uint8 (letters a,d,e,f,j,n,o,s,t,v → 1-10)
+📈 labelTest: (10, 1) - uint8 (letters a,d,e,f,j,n,o,s,t,v → 1-10)
 ```
 
 ### **Usage with CortexFlow**
@@ -310,6 +334,40 @@ labels_train_crell = data_crell['labelTrn'] # (40, 1)
 
 This ensures **complete stimulus coverage** in test set for comprehensive evaluation of all classes.
 
+## 📊 **Generated Outputs**
+
+### **NT-ViT Outputs (ntvit_outputs/)**
+After training, you'll have:
+- **6 Model Files**: `ntvit_*_final.pth` (trained models)
+- **200 Sample Files**: 100 .npy + 100 .json files
+  - `mindbigdata_synthetic_fmri_000-049.npy` (50 samples)
+  - `crell_synthetic_fmri_000-049.npy` (50 samples)
+  - Corresponding .json metadata files
+
+### **CortexFlow Outputs (cortexflow_data/)**
+Ready-to-use MATLAB files:
+- **mindbigdata.mat**: 50 samples (40 train + 10 test)
+- **crell.mat**: 50 samples (40 train + 10 test)
+
+## 🚀 **Quick Start Workflow**
+
+```bash
+# 1. Install dependencies
+pip install -r requirements.txt
+
+# 2. Train NT-ViT models (generates 100 synthetic fMRI samples)
+wsl python train_ntvit.py
+
+# 3. Generate additional samples (optional)
+wsl python generate_full_samples.py
+
+# 4. Convert to CortexFlow format
+wsl python ntvit_to_cortexflow.py
+
+# 5. Verify results
+wsl python verify_cortexflow.py
+```
+
 ## �🔬 **Research Applications & Impact**
 
 ### **Primary Research Domains**
@@ -324,10 +382,53 @@ This ensures **complete stimulus coverage** in test set for comprehensive evalua
 - **📊 Empirical Validation**: Comprehensive evaluation on multiple EEG datasets
 - **🌐 Open Science**: Reproducible research with complete implementation
 
+### **Performance Metrics**
+- **Training Convergence**: MindBigData (0.53→0.44), Crell (0.53→0.36)
+- **Sample Generation**: 100 synthetic fMRI samples from real EEG data
+- **Format Compatibility**: 100% CortexFlow format compliance
+- **Data Quality**: Realistic fMRI activation ranges (-1 to +1)
+
 ### **Future Research Directions**
 - **Real-time Processing**: Online EEG→fMRI synthesis for live applications
 - **Multi-modal Fusion**: Integration with other neuroimaging modalities
 - **Clinical Applications**: Diagnostic and therapeutic applications
+
+## 🛠️ **Troubleshooting**
+
+### **Common Issues**
+
+**CUDA Out of Memory:**
+```bash
+# Reduce batch size in training
+# Edit train_ntvit.py: batch_size=2 instead of 4
+```
+
+**Missing Dataset Files:**
+```bash
+# Ensure datasets/ folder contains:
+# - EP1.01.txt (MindBigData)
+# - S01.mat (Crell)
+# - MindbigdataStimuli/ folder
+# - crellStimuli/ folder
+```
+
+**Import Errors:**
+```bash
+# Verify all dependencies installed
+pip install -r requirements.txt
+wsl python -c "import torch, scipy, numpy; print('All imports OK')"
+```
+
+### **Performance Tips**
+- **Use WSL**: Better performance than native Windows
+- **CUDA Memory**: Monitor GPU memory usage during training
+- **File Size**: NT-ViT outputs are ~464MB total (normal)
+- **Training Time**: ~10-15 minutes on modern GPU
+
+### **File Outputs Explained**
+- **000-049 files**: Full dataset samples from real EEG data
+- **Model .pth files**: Trained NT-ViT weights for inference
+- **CortexFlow .mat files**: Ready for brain-to-image research
 
 ## 🤝 **Contributing**
 
@@ -336,6 +437,14 @@ Feel free to contribute by:
 - Improving the NT-ViT architecture
 - Optimizing training procedures
 - Enhancing documentation
+
+### **System Requirements**
+- **Python 3.11.12**: Core runtime environment
+- **PyTorch 2.7.1+cu128**: Deep learning framework with CUDA 12.8 support
+- **SciPy 1.15.3**: Scientific computing and MATLAB I/O
+- **NumPy 2.1.3**: Numerical computing and array operations
+- **Pillow**: Image processing and manipulation
+- **WSL**: Windows Subsystem for Linux (recommended)
 
 ## 📄 **License**
 
