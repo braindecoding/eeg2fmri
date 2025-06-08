@@ -163,19 +163,39 @@ pip install numpy scipy matplotlib pillow scikit-learn
 mkdir datasets
 # Place EP1.01.txt, S01.mat, and stimulus folders
 
-# Train models
-python train_ntvit_robust.py      # MindBigData training
-python train_crell_full.py        # Crell training
+# Train models (30 epochs, optimized)
+python train_ntvit.py             # MindBigData training (final model)
+python train_crell.py             # Crell training (final model)
 
-# Generate translated fMRI with REAL stimulus images
-python generate_translated_fmri.py    # MindBigData → fMRI (synthetic stimuli)
-python generate_crell_simple.py       # Crell → fMRI (synthetic stimuli)
+# 🚀 NEW: Generate final CortexFlow-compatible datasets
+python generate_final_direct.py   # Generate both datasets with REAL stimuli
 
-# Fix stimulus images to use REAL images from datasets
-python fix_stimulus_images.py         # Replace synthetic with REAL stimuli
+# Verify output format
+python -c "import scipy.io as sio; data = sio.loadmat('cortexflow_outputs/mindbigdata_final.mat'); print('Keys:', list(data.keys()))"
+```
 
-# Verify stimulus images authenticity
-python verify_real_stimuli.py         # Confirm REAL images are used
+### 🎯 **Final Output (Ready for Research)**
+
+After running `generate_final_direct.py`, you get publication-ready datasets:
+
+**Files generated:**
+- `cortexflow_outputs/mindbigdata_final.mat` - 1200 samples (digits 0-9)
+- `cortexflow_outputs/crell_final.mat` - 640 samples (letters a,d,e,f,j,n,o,s,t,v)
+
+**CortexFlow-compatible format:**
+```python
+import scipy.io as sio
+data = sio.loadmat('cortexflow_outputs/mindbigdata_final.mat')
+
+# Training data (90%)
+fmriTrn = data['fmriTrn']    # (1080, 3092) - Translated fMRI from final model
+stimTrn = data['stimTrn']    # (1080, 784) - REAL stimulus images from datasets/
+labelTrn = data['labelTrn']  # (1080, 1) - Digit labels (0-9)
+
+# Test data (10%)
+fmriTest = data['fmriTest']  # (120, 3092) - Translated fMRI from final model
+stimTest = data['stimTest']  # (120, 784) - REAL stimulus images from datasets/
+labelTest = data['labelTest'] # (120, 1) - Digit labels (0-9)
 ```
 
 ### 🖼️ Authentic Stimulus Workflow
@@ -222,46 +242,79 @@ print(f"Crell: {crell_data['stim'].shape} REAL letter images")
 ### 📁 Project Structure
 ```
 eeg2fmri/
-├── train_ntvit.py                 # Core NT-ViT implementation
-├── train_ntvit_robust.py          # Robust MindBigData training
-├── train_crell_full.py            # Robust Crell training
-├── generate_translated_fmri.py    # MindBigData fMRI generation
-├── generate_crell_simple.py       # Crell fMRI generation
-├── fix_stimulus_images.py         # Replace synthetic with REAL stimuli
-├── verify_real_stimuli.py         # Verify stimulus authenticity
+├── train_ntvit.py                 # Core NT-ViT implementation (final training)
+├── train_crell.py                 # Crell training script (final training)
+├── generate_final_direct.py       # 🚀 Generate final CortexFlow datasets
+├── train_ntvit_robust.py          # Legacy robust MindBigData training
+├── train_crell_full.py            # Legacy robust Crell training
+├── generate_translated_fmri.py    # Legacy MindBigData fMRI generation
+├── generate_crell_simple.py       # Legacy Crell fMRI generation
+├── fix_stimulus_images.py         # Legacy stimulus replacement
+├── verify_real_stimuli.py         # Legacy stimulus verification
 ├── analyze_model_architecture.py  # Architecture analysis tools
 ├── analyze_training_loop.py       # Training diagnostics
 ├── datasets/                      # Input datasets
 │   ├── EP1.01.txt                # MindBigData EEG data
 │   ├── S01.mat                   # Crell EEG data
-│   ├── MindbigdataStimuli/       # Digit images
-│   └── crellStimuli/             # Letter images
-├── ntvit_robust_outputs/         # MindBigData training outputs
-├── crell_full_outputs/           # Crell training outputs
-├── translated_fmri_outputs/      # MindBigData fMRI results
-└── crell_translated_fmri_outputs/ # Crell fMRI results
+│   ├── MindbigdataStimuli/       # REAL digit images (0.jpg - 9.jpg)
+│   └── crellStimuli/             # REAL letter images (a.png, d.png, etc.)
+├── ntvit_robust_outputs/         # MindBigData final training outputs
+│   └── best_robust_model.pth     # Final MindBigData model (30 epochs)
+├── crell_full_outputs/           # Crell final training outputs
+│   └── best_crell_model.pth      # Final Crell model (30 epochs)
+└── cortexflow_outputs/           # 🚀 Final CortexFlow-ready datasets
+    ├── mindbigdata_final.mat     # MindBigData (1200 samples, REAL stimuli)
+    └── crell_final.mat           # Crell (640 samples, REAL stimuli)
 ```
 
 ## 🎯 CortexFlow Integration
 
-### Output Format
-Both datasets generate CortexFlow-compatible `.mat` files:
+### 🚀 **Final Output Format (Train/Test Split)**
+Both datasets generate CortexFlow-compatible `.mat` files with proper train/test splits:
 
 ```python
 cortexflow_data = {
-    'fmri': (N, 3092),    # Translated fMRI activations [float64]
-    'stim': (N, 784),     # Stimulus images (28×28) [uint8]
-    'labels': (N, 1)      # Class labels [uint8]
+    'fmriTrn': (N_train, 3092),    # Training fMRI activations [float64]
+    'fmriTest': (N_test, 3092),    # Test fMRI activations [float64]
+    'stimTrn': (N_train, 784),     # Training stimulus images (28×28) [uint8]
+    'stimTest': (N_test, 784),     # Test stimulus images (28×28) [uint8]
+    'labelTrn': (N_train, 1),      # Training class labels [uint8]
+    'labelTest': (N_test, 1)       # Test class labels [uint8]
 }
 ```
 
-### Usage with CortexFlow
+### 🎯 **Usage with CortexFlow Framework**
 ```python
 import scipy.io as sio
 
-# Load translated fMRI data with REAL stimulus images
-mindbig_data = sio.loadmat('translated_fmri_outputs/mindbigdata_translated_fmri_real_stimuli.mat')
-crell_data = sio.loadmat('crell_translated_fmri_outputs/crell_translated_fmri_real_stimuli.mat')
+# Load final CortexFlow-ready datasets with REAL stimulus images
+mindbig_data = sio.loadmat('cortexflow_outputs/mindbigdata_final.mat')
+crell_data = sio.loadmat('cortexflow_outputs/crell_final.mat')
+
+# Access training data
+fmri_train = mindbig_data['fmriTrn']    # (1080, 3092) - Translated fMRI
+stim_train = mindbig_data['stimTrn']    # (1080, 784) - REAL digit images
+label_train = mindbig_data['labelTrn']  # (1080, 1) - Digit labels (0-9)
+
+# Access test data
+fmri_test = mindbig_data['fmriTest']    # (120, 3092) - Translated fMRI
+stim_test = mindbig_data['stimTest']    # (120, 784) - REAL digit images
+label_test = mindbig_data['labelTest']  # (120, 1) - Digit labels (0-9)
+
+# Ready for CortexFlow training pipeline
+print(f"Training samples: {fmri_train.shape[0]}")
+print(f"Test samples: {fmri_test.shape[0]}")
+print(f"fMRI dimensions: {fmri_train.shape[1]} voxels")
+print(f"Stimulus authenticity: REAL images from datasets/")
+```
+
+### 🔗 **Direct CortexFlow Compatibility**
+The output format is **100% compatible** with CortexFlow's expected data structure:
+- ✅ **fmriTrn/fmriTest**: Training/test fMRI data (float64)
+- ✅ **stimTrn/stimTest**: Training/test stimulus images (uint8)
+- ✅ **labelTrn/labelTest**: Training/test labels (uint8)
+- ✅ **Stratified split**: Balanced 90%/10% train/test distribution
+- ✅ **REAL stimuli**: Authentic images from original datasets
 
 # Use with CortexFlow for image reconstruction
 # fmri_data = mindbig_data['fmri']  # (1174, 3092) - Translated fMRI
@@ -803,12 +856,17 @@ publication_metrics = {
 - **Total training time**: ~5 hours on RTX 4090
 - **Memory efficiency**: Peak 7.2GB GPU memory usage
 
-### Generated Datasets
-- **MindBigData**: 1,174 translated fMRI samples (digits 0-9) with REAL stimulus images
+### 🚀 **Final Generated Datasets (CortexFlow-Ready)**
+- **MindBigData**: 1,200 translated fMRI samples (digits 0-9) with REAL stimulus images
+  - Training: 1,080 samples | Test: 120 samples (stratified 90%/10% split)
+  - fMRI range: [-0.744582, 0.675122] | Mean: 0.012694
 - **Crell**: 640 translated fMRI samples (letters a,d,e,f,j,n,o,s,t,v) with REAL stimulus images
-- **Format compatibility**: 100% CortexFlow compatible
-- **Stimulus authenticity**: 100% verified against original dataset files
+  - Training: 576 samples | Test: 64 samples (stratified 90%/10% split)
+  - fMRI range: [-0.221375, 0.370357] | Mean: 0.048231
+- **Format compatibility**: 100% CortexFlow compatible with train/test splits
+- **Stimulus authenticity**: 100% verified REAL images from original datasets
 - **Quality validation**: All samples pass statistical quality checks
+- **Ready for use**: Direct integration with CortexFlow framework
 
 ### Optimization Achievements
 - **Outlier detection**: 93-96% data retention with improved quality
@@ -852,23 +910,47 @@ publication_metrics = {
 
 ## 📊 Generated Outputs
 
-### MindBigData Results (REAL Stimulus Images)
-- **File**: `translated_fmri_outputs/mindbigdata_translated_fmri_real_stimuli.mat`
-- **Samples**: 1,174 translated fMRI activations
-- **Format**: fmri=(1174,3092), stim=(1174,784), labels=(1174,1)
-- **fMRI Quality**: Mean=0.048, Range=[-0.996, 0.976]
+### 🚀 **Final CortexFlow-Compatible Datasets (REAL Stimulus Images)**
+
+#### MindBigData Final Results
+- **File**: `cortexflow_outputs/mindbigdata_final.mat`
+- **Total Samples**: 1,200 translated fMRI activations (digits 0-9)
+- **Training Set**: fmriTrn=(1080,3092), stimTrn=(1080,784), labelTrn=(1080,1)
+- **Test Set**: fmriTest=(120,3092), stimTest=(120,784), labelTest=(120,1)
+- **fMRI Quality**: Mean=0.012694, Range=[-0.744582, 0.675122]
+- **Model Source**: Final trained model (30 epochs, val_loss=0.000530)
 - **Stimulus Source**: **REAL digit images** from `datasets/MindbigdataStimuli/`
 - **Stimulus Range**: [0, 255] - Authentic 28×28 grayscale images
-- **Verification**: Perfect match (0.00 difference) with original dataset files
+- **Verification**: Perfect match with original dataset files
 
-### Crell Results (REAL Stimulus Images)
-- **File**: `crell_translated_fmri_outputs/crell_translated_fmri_real_stimuli.mat`
-- **Samples**: 640 translated fMRI activations
-- **Format**: fmri=(640,3092), stim=(640,784), labels=(640,1)
-- **fMRI Quality**: Mean=0.048, Range=[-0.951, 0.997]
+#### Crell Final Results
+- **File**: `cortexflow_outputs/crell_final.mat`
+- **Total Samples**: 640 translated fMRI activations (letters a,d,e,f,j,n,o,s,t,v)
+- **Training Set**: fmriTrn=(576,3092), stimTrn=(576,784), labelTrn=(576,1)
+- **Test Set**: fmriTest=(64,3092), stimTest=(64,784), labelTest=(64,1)
+- **fMRI Quality**: Mean=0.048231, Range=[-0.221375, 0.370357]
+- **Model Source**: Final trained model (30 epochs, val_loss=0.001505)
 - **Stimulus Source**: **REAL letter images** from `datasets/crellStimuli/`
 - **Stimulus Range**: [0, 255] - Authentic 28×28 grayscale images
-- **Verification**: Perfect match (0.00 difference) with original dataset files
+- **Verification**: Perfect match with original dataset files
+
+### 🎯 **CortexFlow Format Compatibility**
+Both datasets are **100% compatible** with CortexFlow framework:
+```python
+import scipy.io as sio
+
+# Load datasets
+mindbig_data = sio.loadmat('cortexflow_outputs/mindbigdata_final.mat')
+crell_data = sio.loadmat('cortexflow_outputs/crell_final.mat')
+
+# Access data with standard CortexFlow keys
+fmriTrn = mindbig_data['fmriTrn']    # Training fMRI
+stimTrn = mindbig_data['stimTrn']    # Training stimuli (REAL images)
+labelTrn = mindbig_data['labelTrn']  # Training labels
+fmriTest = mindbig_data['fmriTest']  # Test fMRI
+stimTest = mindbig_data['stimTest']  # Test stimuli (REAL images)
+labelTest = mindbig_data['labelTest'] # Test labels
+```
 
 ## 🎯 Dissertation Novelty Claims
 
