@@ -22,15 +22,21 @@ This project implements a state-of-the-art **Neural Transformer Vision Transform
 ```
 eeg2fmri/
 ├── main.py                       # Complete NT-ViT implementation
+├── convert_to_cortexflow.py      # CortexFlow format converter
+├── generate_more_samples.py      # Enhanced sample generator
+├── verify_cortexflow_data.py     # Data validation script
 ├── datasets/                     # Input datasets
 │   ├── EP1.01.txt               # MindBigData EEG data
 │   ├── S01.mat                  # Crell EEG data
 │   ├── MindbigdataStimuli/      # Digit stimuli (0.jpg - 9.jpg)
 │   └── crellStimuli/            # Letter stimuli (a.png, d.png, etc.)
-├── ntvit_outputs/               # Generated outputs
+├── ntvit_outputs/               # NT-ViT generated outputs
 │   ├── ntvit_*.pth             # Trained model weights
 │   ├── *_synthetic_fmri_*.npy  # Synthetic fMRI data
 │   └── *.json                  # Metadata files
+├── cortexflow_data/            # CortexFlow-compatible outputs
+│   ├── mindbigdata.mat         # MindBigData for CortexFlow
+│   └── crell.mat               # Crell for CortexFlow
 └── README.md                    # This file
 ```
 
@@ -199,13 +205,70 @@ print(f"Shape: {synthetic_fmri.shape}")  # (15724,)
 - **Processing Speed**: ~1-2 minutes per epoch
 - **Output Quality**: Consistent value ranges
 
-## 🔬 **Research Applications**
+## � **CortexFlow Integration**
+
+### **Convert to CortexFlow Format**
+```bash
+# Generate CortexFlow-compatible MATLAB files
+wsl python generate_more_samples.py
+```
+
+### **Generated CortexFlow Datasets**
+
+**MindBigData Dataset (mindbigdata.mat):**
+```
+📈 fmriTrn: (40, 3092) - float64
+    Range: [-0.924, 0.820], Mean: 0.039, Std: 0.342
+📈 stimTrn: (40, 784) - uint8 (28×28 grayscale images)
+📈 fmriTest: (10, 3092) - float64
+📈 stimTest: (10, 784) - uint8
+📈 labelTrn: (40, 1) - uint8 (digits 0-9)
+📈 labelTest: (10, 1) - uint8
+```
+
+**Crell Dataset (crell.mat):**
+```
+📈 fmriTrn: (40, 3092) - float64
+    Range: [-0.985, 0.999], Mean: 0.004, Std: 0.304
+📈 stimTrn: (40, 784) - uint8 (28×28 grayscale images)
+📈 fmriTest: (10, 3092) - float64
+📈 stimTest: (10, 784) - uint8
+📈 labelTrn: (40, 1) - uint8 (letters a,d,e,f,j,n,o,s,t,v → 1-10)
+📈 labelTest: (10, 1) - uint8
+```
+
+### **Usage with CortexFlow**
+```python
+import scipy.io
+
+# Load MindBigData for CortexFlow
+data_mb = scipy.io.loadmat('cortexflow_data/mindbigdata.mat')
+fmri_train = data_mb['fmriTrn']    # (40, 3092)
+stim_train = data_mb['stimTrn']    # (40, 784)
+labels_train = data_mb['labelTrn'] # (40, 1)
+
+# Load Crell for CortexFlow
+data_crell = scipy.io.loadmat('cortexflow_data/crell.mat')
+fmri_train_crell = data_crell['fmriTrn']    # (40, 3092)
+stim_train_crell = data_crell['stimTrn']    # (40, 784)
+labels_train_crell = data_crell['labelTrn'] # (40, 1)
+```
+
+### **CortexFlow Conversion Features**
+- ✅ **Exact Format Match**: Compatible with CortexFlow requirements
+- ✅ **Proper Data Types**: float64 (fMRI), uint8 (stimuli/labels)
+- ✅ **Standard Dimensions**: 3092 fMRI voxels, 784 stimulus pixels
+- ✅ **Train/Test Split**: 80/20 split with reproducible random seed
+- ✅ **Multi-Modal**: fMRI + Visual stimuli + Class labels
+
+## �🔬 **Research Applications**
 
 This framework enables:
 - **Brain-Computer Interfaces**: EEG → Visual reconstruction
 - **Neuroscience Research**: Cross-modal brain signal analysis
 - **Medical Applications**: Non-invasive brain imaging synthesis
 - **AI Research**: Multi-modal transformer architectures
+- **CortexFlow Integration**: Direct compatibility for brain-to-image models
 
 ## 🤝 **Contributing**
 
