@@ -1,29 +1,41 @@
-# 🧠 NT-ViT: EEG-to-fMRI Synthesis Framework
+# 🧠 CortexFlow EEG Adapter
 
-**Neural Transformer Vision Transformer (NT-ViT)** - A complete implementation for converting EEG signals to synthetic fMRI data using Vision Transformer architecture, supporting both MindBigData and Crell datasets.
+**A Novel Neural Transformer Vision Transformer (NT-ViT) Adapter** - Enabling EEG signal integration with CortexFlow framework for brain-to-image reconstruction. This adapter converts EEG signals to synthetic fMRI data compatible with existing CortexFlow pipelines.
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
-[![CUDA](https://img.shields.io/badge/CUDA-11.0+-green.svg)](https://developer.nvidia.com/cuda-downloads)
+[![Python 3.11](https://img.shields.io/badge/python-3.11.12-blue.svg)](https://www.python.org/downloads/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.7.1+cu128-red.svg)](https://pytorch.org/)
+[![CUDA](https://img.shields.io/badge/CUDA-12.8-green.svg)](https://developer.nvidia.com/cuda-downloads)
+[![NumPy](https://img.shields.io/badge/NumPy-2.1.3-lightblue.svg)](https://numpy.org/)
+[![SciPy](https://img.shields.io/badge/SciPy-1.15.3-yellow.svg)](https://scipy.org/)
+[![Research](https://img.shields.io/badge/Research-Dissertation-orange.svg)](https://github.com)
 
 ## 🎯 **Overview**
 
-This project implements a state-of-the-art **Neural Transformer Vision Transformer (NT-ViT)** framework that converts EEG brain signals into synthetic fMRI data. The synthetic fMRI outputs are compatible with MindEye for downstream image reconstruction tasks.
+**CortexFlow EEG Adapter** introduces a novel approach to integrate EEG signals with the CortexFlow framework through a custom **Neural Transformer Vision Transformer (NT-ViT)** architecture. This adapter enables researchers to leverage EEG data for brain-to-image reconstruction tasks previously limited to fMRI inputs.
 
-### **Key Features**
-- ✅ **Multi-Dataset Support**: MindBigData (digits) + Crell (letters)
-- ✅ **Vision Transformer Architecture**: Advanced encoder-decoder design
-- ✅ **Domain Matching**: Cross-modal alignment for better synthesis
-- ✅ **MindEye Compatible**: Direct integration with existing pipelines
-- ✅ **Production Ready**: Robust numerical stability and error handling
+### **Key Innovation**
+This work presents the **first EEG adapter for CortexFlow**, bridging the gap between non-invasive EEG recordings and advanced brain-to-image reconstruction capabilities.
+
+### **Research Contributions**
+- 🔬 **Novel EEG Integration**: First adapter enabling EEG input for CortexFlow
+- 🧠 **NT-ViT Architecture**: Custom Vision Transformer for EEG→fMRI synthesis
+- 📊 **Multi-Dataset Training**: Unified approach for MindBigData + Crell datasets
+- 🔄 **Cross-Modal Alignment**: Advanced domain matching for neural signal translation
+- ⚡ **Production Ready**: Robust implementation with comprehensive validation
+
+### **Academic Impact**
+- **Methodological Innovation**: Extends CortexFlow capabilities to EEG modality
+- **Accessibility Enhancement**: Enables brain-to-image research with non-invasive EEG
+- **Reproducible Research**: Complete pipeline with standardized evaluation protocols
 
 ## 📁 **Directory Structure**
 
 ```
-eeg2fmri/
+cortexflow-eeg-adapter/
 ├── train_ntvit.py                # NT-ViT training pipeline
-├── ntvit_to_cortexflow.py        # CortexFlow data converter
+├── ntvit_to_cortexflow.py        # CortexFlow adapter converter
 ├── verify_cortexflow.py          # Data validation script
+├── requirements.txt              # Python dependencies
 ├── datasets/                     # Input datasets
 │   ├── EP1.01.txt               # MindBigData EEG data
 │   ├── S01.mat                  # Crell EEG data
@@ -74,10 +86,33 @@ EEG Signal → Mel Spectrogram → ViT Encoder → ViT Decoder → Synthetic fMR
 ## 🚀 **Quick Start**
 
 ### **Prerequisites**
+
+**System Requirements:**
+- Python 3.11.12
+- CUDA 12.8 compatible GPU
+- WSL (Windows Subsystem for Linux) recommended
+
+**Required Packages:**
 ```bash
-# Required packages
-pip install torch torchvision torchaudio
-pip install scipy numpy matplotlib pillow
+# PyTorch with CUDA 12.8 support
+pip install torch==2.7.1+cu128 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+# Scientific computing packages
+pip install scipy==1.15.3 numpy==2.1.3
+
+# Additional dependencies
+pip install matplotlib pillow
+```
+
+**Alternative Installation (using requirements.txt):**
+```bash
+pip install -r requirements.txt
+```
+
+**Verify Installation:**
+```bash
+wsl python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
+# Expected output: PyTorch: 2.7.1+cu128, CUDA: True
 ```
 
 ### **Step 1: Prepare Data**
@@ -275,14 +310,24 @@ labels_train_crell = data_crell['labelTrn'] # (40, 1)
 
 This ensures **complete stimulus coverage** in test set for comprehensive evaluation of all classes.
 
-## �🔬 **Research Applications**
+## �🔬 **Research Applications & Impact**
 
-This framework enables:
-- **Brain-Computer Interfaces**: EEG → Visual reconstruction
-- **Neuroscience Research**: Cross-modal brain signal analysis
-- **Medical Applications**: Non-invasive brain imaging synthesis
-- **AI Research**: Multi-modal transformer architectures
-- **CortexFlow Integration**: Direct compatibility for brain-to-image models
+### **Primary Research Domains**
+- **🧠 Computational Neuroscience**: Novel EEG→fMRI synthesis methodology
+- **🔬 Brain-Computer Interfaces**: Non-invasive neural signal decoding
+- **🏥 Medical Imaging**: Cost-effective alternative to fMRI acquisition
+- **🤖 AI/ML Research**: Cross-modal neural architecture development
+
+### **Dissertation Contributions**
+- **📚 Methodological Innovation**: First EEG adapter for CortexFlow framework
+- **🔧 Technical Advancement**: NT-ViT architecture for neural signal translation
+- **📊 Empirical Validation**: Comprehensive evaluation on multiple EEG datasets
+- **🌐 Open Science**: Reproducible research with complete implementation
+
+### **Future Research Directions**
+- **Real-time Processing**: Online EEG→fMRI synthesis for live applications
+- **Multi-modal Fusion**: Integration with other neuroimaging modalities
+- **Clinical Applications**: Diagnostic and therapeutic applications
 
 ## 🤝 **Contributing**
 
@@ -298,4 +343,22 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Ready to synthesize fMRI from EEG? Run `wsl python train_ntvit.py` and watch the magic happen! 🧠✨**
+---
+
+## 📖 **Citation**
+
+If you use CortexFlow EEG Adapter in your research, please cite:
+
+```bibtex
+@misc{cortexflow_eeg_adapter,
+  title={CortexFlow EEG Adapter: A Novel Neural Transformer Approach for EEG-to-fMRI Synthesis},
+  author={[Your Name]},
+  year={2024},
+  note={Dissertation Research - [Your University]},
+  url={https://github.com/[your-repo]/cortexflow-eeg-adapter}
+}
+```
+
+---
+
+**🚀 Ready to bridge EEG and CortexFlow? Start with `wsl python train_ntvit.py` and advance neuroscience research! 🧠✨**
