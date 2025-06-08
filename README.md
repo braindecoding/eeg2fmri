@@ -21,10 +21,9 @@ This project implements a state-of-the-art **Neural Transformer Vision Transform
 
 ```
 eeg2fmri/
-├── main.py                       # Complete NT-ViT implementation
-├── convert_to_cortexflow.py      # CortexFlow format converter
-├── generate_more_samples.py      # Enhanced sample generator
-├── verify_cortexflow_data.py     # Data validation script
+├── train_ntvit.py                # NT-ViT training pipeline
+├── ntvit_to_cortexflow.py        # CortexFlow data converter
+├── verify_cortexflow.py          # Data validation script
 ├── datasets/                     # Input datasets
 │   ├── EP1.01.txt               # MindBigData EEG data
 │   ├── S01.mat                  # Crell EEG data
@@ -100,7 +99,7 @@ datasets/
 ### **Step 2: Run Training**
 ```bash
 # Always run in WSL for optimal performance
-wsl python main.py
+wsl python train_ntvit.py
 ```
 
 ### **Step 3: Monitor Training**
@@ -210,7 +209,7 @@ print(f"Shape: {synthetic_fmri.shape}")  # (15724,)
 ### **Convert to CortexFlow Format**
 ```bash
 # Generate CortexFlow-compatible MATLAB files
-wsl python generate_more_samples.py
+wsl python ntvit_to_cortexflow.py
 ```
 
 ### **Generated CortexFlow Datasets**
@@ -222,19 +221,19 @@ wsl python generate_more_samples.py
 📈 stimTrn: (40, 784) - uint8 (28×28 grayscale images)
 📈 fmriTest: (10, 3092) - float64
 📈 stimTest: (10, 784) - uint8
-📈 labelTrn: (40, 1) - uint8 (digits 0-9)
-📈 labelTest: (10, 1) - uint8
+📈 labelTrn: (40, 1) - uint8 (digits 0,1,2,3,4,5,6,7)
+📈 labelTest: (10, 1) - uint8 (digits 8,9)
 ```
 
 **Crell Dataset (crell.mat):**
 ```
 📈 fmriTrn: (40, 3092) - float64
-    Range: [-0.985, 0.999], Mean: 0.004, Std: 0.304
+    Range: [-0.985, 0.999], Mean: 0.005, Std: 0.313
 📈 stimTrn: (40, 784) - uint8 (28×28 grayscale images)
 📈 fmriTest: (10, 3092) - float64
 📈 stimTest: (10, 784) - uint8
-📈 labelTrn: (40, 1) - uint8 (letters a,d,e,f,j,n,o,s,t,v → 1-10)
-📈 labelTest: (10, 1) - uint8
+📈 labelTrn: (40, 1) - uint8 (letters a,d,e,f,j,n,o,s → 1-8)
+📈 labelTest: (10, 1) - uint8 (letters t,v → 9,10)
 ```
 
 ### **Usage with CortexFlow**
@@ -258,8 +257,23 @@ labels_train_crell = data_crell['labelTrn'] # (40, 1)
 - ✅ **Exact Format Match**: Compatible with CortexFlow requirements
 - ✅ **Proper Data Types**: float64 (fMRI), uint8 (stimuli/labels)
 - ✅ **Standard Dimensions**: 3092 fMRI voxels, 784 stimulus pixels
-- ✅ **Train/Test Split**: 80/20 split with reproducible random seed
+- ✅ **Balanced Split**: All stimuli represented in test set (comprehensive evaluation)
 - ✅ **Multi-Modal**: fMRI + Visual stimuli + Class labels
+
+### **Train/Test Split Strategy**
+**Balanced Representation Approach:**
+- **Test Set**: Contains 1 sample from EVERY stimulus class
+- **Train Set**: Contains remaining samples from all classes
+
+**MindBigData (Digits 0-9):**
+- **Train**: 40 samples (4 samples per digit on average)
+- **Test**: 10 samples (1 sample per digit: 0,1,2,3,4,5,6,7,8,9)
+
+**Crell (Letters a,d,e,f,j,n,o,s,t,v):**
+- **Train**: 40 samples (4 samples per letter on average)
+- **Test**: 10 samples (1 sample per letter: a,d,e,f,j,n,o,s,t,v)
+
+This ensures **complete stimulus coverage** in test set for comprehensive evaluation of all classes.
 
 ## �🔬 **Research Applications**
 
@@ -284,4 +298,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Ready to synthesize fMRI from EEG? Run `wsl python main.py` and watch the magic happen! 🧠✨**
+**Ready to synthesize fMRI from EEG? Run `wsl python train_ntvit.py` and watch the magic happen! 🧠✨**

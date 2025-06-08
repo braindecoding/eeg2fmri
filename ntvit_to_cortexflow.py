@@ -15,9 +15,9 @@ import json
 from PIL import Image
 import sys
 
-# Add main.py imports
+# Add train_ntvit.py imports
 sys.path.append('.')
-from main import NTViTEEGToFMRI, MindBigDataLoader, CrellDataLoader
+from train_ntvit import NTViTEEGToFMRI, MindBigDataLoader, CrellDataLoader
 
 class CortexFlowDataGenerator:
     """Generate more samples for CortexFlow using trained NT-ViT models"""
@@ -119,7 +119,69 @@ class CortexFlowDataGenerator:
                 labels.append(crell_labels.get(letter, 1))
         
         return np.array(stimuli_data), np.array(labels)
-    
+
+    def create_train_test_split_by_stimulus(self, fmri_data, stimuli_data, labels, dataset_type: str):
+        """Create train/test split ensuring ALL stimuli are represented in test set"""
+
+        if dataset_type == "mindbigdata":
+            # MindBigData: digits 0-9 (all should be in test)
+            all_labels = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        else:  # crell
+            # Crell: letters a,d,e,f,j,n,o,s,t,v → labels 1-10 (all should be in test)
+            all_labels = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+        # Group samples by label
+        samples_by_label = {}
+        for i, label in enumerate(labels):
+            if label not in samples_by_label:
+                samples_by_label[label] = []
+            samples_by_label[label].append(i)
+
+        # Ensure we have at least 1 sample per label for test set
+        test_indices = []
+        train_indices = []
+
+        for label in all_labels:
+            if label in samples_by_label:
+                label_samples = samples_by_label[label]
+
+                # Shuffle samples for this label
+                np.random.seed(42 + label)  # Different seed per label for diversity
+                np.random.shuffle(label_samples)
+
+                # Take 1 sample for test, rest for train
+                test_indices.append(label_samples[0])  # First sample for test
+                train_indices.extend(label_samples[1:])  # Rest for train
+            else:
+                print(f"    Warning: No samples found for label {label}")
+
+        # Convert to numpy arrays
+        train_indices = np.array(train_indices)
+        test_indices = np.array(test_indices)
+
+        # Final shuffle
+        np.random.seed(42)
+        np.random.shuffle(train_indices)
+        np.random.shuffle(test_indices)
+
+        # Create splits
+        fmri_train = fmri_data[train_indices]
+        fmri_test = fmri_data[test_indices]
+        stim_train = stimuli_data[train_indices]
+        stim_test = stimuli_data[test_indices]
+        label_train = labels[train_indices]
+        label_test = labels[test_indices]
+
+        print(f"  📊 Balanced split for {dataset_type}:")
+        print(f"    Train labels: {sorted(np.unique(label_train))}")
+        print(f"    Test labels:  {sorted(np.unique(label_test))}")
+        print(f"    Train samples: {len(train_indices)}")
+        print(f"    Test samples:  {len(test_indices)}")
+        print(f"    ✅ All {len(all_labels)} stimuli represented in test set")
+
+        return (fmri_train, fmri_test, stim_train, stim_test,
+                label_train.reshape(-1, 1), label_test.reshape(-1, 1))
+
     def generate_dataset(self, dataset_type: str, n_samples: int = 90):
         """Generate a complete dataset for CortexFlow"""
         print(f"\n🔄 Generating {dataset_type} dataset ({n_samples} samples)...")
@@ -158,23 +220,19 @@ class CortexFlowDataGenerator:
             padding = np.zeros((synthetic_fmri.shape[0], 3092 - synthetic_fmri.shape[1]))
             synthetic_fmri = np.concatenate([synthetic_fmri, padding], axis=1)
         
-        # Create train/test split (80/20)
-        n_train = int(len(synthetic_fmri) * 0.8)
-        
-        # Random shuffle
-        np.random.seed(42)
-        indices = np.random.permutation(len(synthetic_fmri))
-        
-        train_indices = indices[:n_train]
-        test_indices = indices[n_train:]
-        
-        # Split data
-        fmri_train = synthetic_fmri[train_indices].astype(np.float64)
-        fmri_test = synthetic_fmri[test_indices].astype(np.float64)
-        stim_train = stimuli_data[train_indices].astype(np.uint8)
-        stim_test = stimuli_data[test_indices].astype(np.uint8)
-        label_train = labels[train_indices].reshape(-1, 1).astype(np.uint8)
-        label_test = labels[test_indices].reshape(-1, 1).astype(np.uint8)
+        # Create train/test split ensuring different stimuli
+        (fmri_train, fmri_test, stim_train, stim_test,
+         label_train, label_test) = self.create_train_test_split_by_stimulus(
+            synthetic_fmri, stimuli_data, labels, dataset_type
+        )
+
+        # Convert to appropriate data types
+        fmri_train = fmri_train.astype(np.float64)
+        fmri_test = fmri_test.astype(np.float64)
+        stim_train = stim_train.astype(np.uint8)
+        stim_test = stim_test.astype(np.uint8)
+        label_train = label_train.astype(np.uint8)
+        label_test = label_test.astype(np.uint8)
         
         # Print statistics
         print(f"\n📊 {dataset_type.upper()} Dataset Statistics:")
