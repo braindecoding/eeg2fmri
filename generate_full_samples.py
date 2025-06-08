@@ -19,11 +19,14 @@ def main():
     datasets_dir = Path('datasets')
     output_dir = 'ntvit_outputs'
     
-    print(f"🧠 NT-ViT Full Sample Generator")
-    print(f"=" * 50)
+    print(f"🧠 NT-ViT FULL Dataset Generator - Maximum Expansion")
+    print(f"=" * 60)
+    print(f"🔥 MAXIMUM EXPANSION: Using ALL available EEG data!")
+    print(f"📊 Expected: ~900K+ MindBigData + ~320 Crell samples")
     print(f"Device: {device}")
     print(f"Datasets: {datasets_dir}")
     print(f"Output: {output_dir}")
+    print(f"=" * 60)
     
     # Create output directory
     Path(output_dir).mkdir(exist_ok=True)
@@ -54,7 +57,7 @@ def main():
         mindbig_loader = MindBigDataLoader(
             filepath=str(datasets_dir / "EP1.01.txt"),
             stimuli_dir=str(datasets_dir / "MindbigdataStimuli"),
-            max_samples=50
+            max_samples=None  # FULL DATASET - No limit!
         )
         
         if mindbig_loader.samples:
@@ -85,7 +88,7 @@ def main():
         crell_loader = CrellDataLoader(
             filepath=str(datasets_dir / "S01.mat"),
             stimuli_dir=str(datasets_dir / "crellStimuli"),
-            max_samples=50
+            max_samples=None  # FULL DATASET - No limit!
         )
         
         if crell_loader.samples:

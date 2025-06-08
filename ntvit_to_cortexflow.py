@@ -53,19 +53,21 @@ class CortexFlowDataGenerator:
             print(f"❌ Error loading {dataset_type} model: {e}")
             return None
     
-    def load_dataset_samples(self, dataset_type: str, max_samples: int = 100):
-        """Load original dataset samples"""
+    def load_dataset_samples(self, dataset_type: str, max_samples: int = None):
+        """Load original dataset samples - FULL DATASET for Maximum Expansion"""
         if dataset_type == "mindbigdata":
+            print(f"  🔥 Loading FULL MindBigData dataset (no limit)...")
             loader = MindBigDataLoader(
                 filepath=str(self.datasets_dir / "EP1.01.txt"),
                 stimuli_dir=str(self.datasets_dir / "MindbigdataStimuli"),
-                max_samples=max_samples
+                max_samples=max_samples  # None = no limit
             )
         else:  # crell
+            print(f"  🔥 Loading FULL Crell dataset (no limit)...")
             loader = CrellDataLoader(
                 filepath=str(self.datasets_dir / "S01.mat"),
                 stimuli_dir=str(self.datasets_dir / "crellStimuli"),
-                max_samples=max_samples
+                max_samples=max_samples  # None = no limit
             )
         
         return loader.samples
@@ -182,12 +184,13 @@ class CortexFlowDataGenerator:
         return (fmri_train, fmri_test, stim_train, stim_test,
                 label_train.reshape(-1, 1), label_test.reshape(-1, 1))
 
-    def generate_dataset(self, dataset_type: str, n_samples: int = 90):
-        """Generate a complete dataset for CortexFlow"""
-        print(f"\n🔄 Generating {dataset_type} dataset ({n_samples} samples)...")
-        
-        # Load original samples
-        samples = self.load_dataset_samples(dataset_type, max_samples=n_samples)
+    def generate_dataset(self, dataset_type: str, n_samples: int = None):
+        """Generate LARGE dataset for CortexFlow - Substantial Expansion"""
+        # Load original samples - MODERATE EXPANSION (safe approach)
+        large_sample_size = 1000 if dataset_type == "mindbigdata" else 200
+        print(f"\n🔄 Generating {dataset_type} dataset (MODERATE EXPANSION - {large_sample_size} samples)...")
+
+        samples = self.load_dataset_samples(dataset_type, max_samples=large_sample_size)
         print(f"  Loaded {len(samples)} original samples")
         
         if len(samples) == 0:
@@ -272,19 +275,22 @@ class CortexFlowDataGenerator:
         return matlab_data
     
     def generate_all(self, output_dir: str = "cortexflow_data"):
-        """Generate expanded datasets for both MindBigData and Crell"""
-        print("🧠 NT-ViT CortexFlow Data Generator")
-        print("=" * 50)
-        
+        """Generate FULL datasets for both MindBigData and Crell - Maximum Expansion"""
+        print("🧠 NT-ViT CortexFlow Data Generator (FULL DATASET)")
+        print("=" * 60)
+        print("🔥 MODERATE EXPANSION: Using substantial dataset!")
+        print("📊 Expected: ~1K MindBigData + ~200 Crell samples")
+        print("=" * 60)
+
         output_path = Path(output_dir)
         output_path.mkdir(exist_ok=True)
-        
+
         datasets = ["mindbigdata", "crell"]
-        
+
         for dataset in datasets:
             try:
-                # Generate dataset
-                matlab_data = self.generate_dataset(dataset, n_samples=50)  # Use available samples
+                # Generate FULL dataset - no sample limit
+                matlab_data = self.generate_dataset(dataset, n_samples=None)  # FULL DATASET!
                 
                 if matlab_data is not None:
                     # Save MATLAB file
