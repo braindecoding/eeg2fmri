@@ -1086,17 +1086,70 @@ def main():
     # Generate sample outputs
     print(f"\n🔬 Generating sample synthetic fMRI...")
     
-    # Test MindBigData model
-    test_eeg_mindbig = torch.randn(3, 14, 512).to(device)
-    generate_synthetic_fmri(
-        mindbig_model, test_eeg_mindbig, output_dir, "mindbigdata"
+    # Generate synthetic fMRI from full datasets
+    print(f"\n🧪 Generating synthetic fMRI from full datasets...")
+
+    # Load full MindBigData dataset
+    print(f"📊 Processing MindBigData dataset...")
+    datasets_path = Path(datasets_dir)
+    mindbig_loader = MindBigDataLoader(
+        filepath=str(datasets_path / "EP1.01.txt"),
+        stimuli_dir=str(datasets_path / "MindbigdataStimuli"),
+        max_samples=50  # Generate more samples
     )
-    
-    # Test Crell model - updated for new visual epoch length
-    test_eeg_crell = torch.randn(3, 64, 2250).to(device)  # 4.5 seconds at 500Hz
-    generate_synthetic_fmri(
-        crell_model, test_eeg_crell, output_dir, "crell"
+
+    if mindbig_loader.samples:
+        # Extract EEG data from all samples
+        eeg_data_list = []
+        for sample in mindbig_loader.samples:
+            eeg_tensor = torch.tensor(sample['eeg_data'], dtype=torch.float32)
+            eeg_data_list.append(eeg_tensor)
+
+        # Stack into batch tensor
+        test_eeg_mindbig = torch.stack(eeg_data_list).to(device)
+        print(f"  📈 Loaded {len(test_eeg_mindbig)} MindBigData EEG samples: {test_eeg_mindbig.shape}")
+
+        generate_synthetic_fmri(
+            mindbig_model, test_eeg_mindbig, output_dir, "mindbigdata"
+        )
+    else:
+        print(f"  ⚠️ No MindBigData samples found, using random data")
+        test_eeg_mindbig = torch.randn(3, 14, 512).to(device)
+        generate_synthetic_fmri(
+            mindbig_model, test_eeg_mindbig, output_dir, "mindbigdata"
+        )
+
+    # Load full Crell dataset
+    print(f"📊 Processing Crell dataset...")
+    crell_loader = CrellDataLoader(
+        filepath=str(datasets_path / "S01.mat"),
+        stimuli_dir=str(datasets_path / "crellStimuli"),
+        max_samples=50  # Generate more samples
     )
+
+    if crell_loader.samples:
+        # Extract EEG data from all samples
+        eeg_data_list = []
+        for sample in crell_loader.samples:
+            eeg_tensor = torch.tensor(sample['eeg_data'], dtype=torch.float32)
+            eeg_data_list.append(eeg_tensor)
+
+        # Stack into batch tensor
+        test_eeg_crell = torch.stack(eeg_data_list).to(device)
+        print(f"  📈 Loaded {len(test_eeg_crell)} Crell EEG samples: {test_eeg_crell.shape}")
+
+        generate_synthetic_fmri(
+            crell_model, test_eeg_crell, output_dir, "crell"
+        )
+    else:
+        print(f"  ⚠️ No Crell samples found, using random data")
+        test_eeg_crell = torch.randn(3, 64, 2250).to(device)
+        generate_synthetic_fmri(
+            crell_model, test_eeg_crell, output_dir, "crell"
+        )
+
+    print(f"📊 Generated synthetic fMRI from full datasets")
+    print(f"💡 Check ntvit_outputs/ for all generated samples")
     
     print(f"\n✅ NT-ViT pipeline complete!")
     print(f"📁 Output files in: {output_dir}/")
