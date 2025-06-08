@@ -47,26 +47,43 @@ warnings.filterwarnings('ignore')
 class NTViTEEGToFMRI(nn.Module):
     """NT-ViT Framework untuk EEG → fMRI conversion"""
     
-    def __init__(self, 
+    def __init__(self,
                  eeg_channels: int,
                  fmri_voxels: int = 15724,
                  mel_bins: int = 128,
                  patch_size: int = 16,
-                 embed_dim: int = 768,
-                 num_heads: int = 12,
-                 num_layers: int = 12):
+                 embed_dim: int = 256,  # Reduced from 768
+                 num_heads: int = 8,    # Reduced from 12
+                 num_layers: int = 6):  # Reduced from 12
         super().__init__()
-        
+
         self.eeg_channels = eeg_channels
         self.fmri_voxels = fmri_voxels
         self.mel_bins = mel_bins
         self.patch_size = patch_size
         self.embed_dim = embed_dim
-        
+
         # Core NT-ViT components
         self.spectrogrammer = SpectrogramGenerator(eeg_channels, mel_bins)
         self.generator = NTViTGenerator(mel_bins, fmri_voxels, patch_size, embed_dim, num_heads, num_layers)
         self.domain_matcher = DomainMatchingModule(fmri_voxels, embed_dim)
+
+        # Initialize weights properly
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        """Proper weight initialization"""
+        if isinstance(module, nn.Linear):
+            torch.nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Conv2d):
+            torch.nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.LayerNorm):
+            torch.nn.init.ones_(module.weight)
+            torch.nn.init.zeros_(module.bias)
         
     def forward(self, 
                 eeg_data: torch.Tensor,
@@ -122,18 +139,29 @@ class SpectrogramGenerator(nn.Module):
         
     def forward(self, eeg_data: torch.Tensor) -> torch.Tensor:
         """Convert EEG to mel spectrograms"""
-        batch_size, channels, time_points = eeg_data.shape
-        
+        _, channels, _ = eeg_data.shape
+
+        # Clamp input to prevent extreme values
+        eeg_data = torch.clamp(eeg_data, -10.0, 10.0)
+
         mel_spectrograms = []
         for ch in range(channels):
             channel_data = eeg_data[:, ch, :]
+            # Add small noise to prevent zeros
+            channel_data = channel_data + torch.randn_like(channel_data) * 1e-6
             mel_spec = self.mel_transform(channel_data)
             mel_spectrograms.append(mel_spec)
-        
+
         stacked_mels = torch.stack(mel_spectrograms, dim=1)
         fused_mels = self.channel_fusion(stacked_mels)
-        fused_mels = torch.log(fused_mels + 1e-8)
-        
+
+        # Better numerical stability for log
+        fused_mels = torch.clamp(fused_mels, min=1e-6)
+        fused_mels = torch.log(fused_mels + 1e-6)
+
+        # Normalize to prevent extreme values
+        fused_mels = torch.clamp(fused_mels, -5.0, 5.0)
+
         return fused_mels
 
 class NTViTGenerator(nn.Module):
@@ -253,10 +281,12 @@ class VisionTransformerDecoder(nn.Module):
         )
         self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers)
         
-        # Output projection
+        # Output projection with batch normalization
         self.output_projection = nn.Sequential(
             nn.Linear(embed_dim, embed_dim * 2),
+            nn.BatchNorm1d(embed_dim * 2),
             nn.ReLU(),
+            nn.Dropout(0.1),
             nn.Linear(embed_dim * 2, 64),
             nn.Tanh()
         )
@@ -264,23 +294,29 @@ class VisionTransformerDecoder(nn.Module):
     def forward(self, encoded: torch.Tensor) -> torch.Tensor:
         """Decode latent to fMRI volume"""
         batch_size = encoded.shape[0]
-        
+
         memory = encoded.unsqueeze(1)
         queries = self.fmri_queries.expand(batch_size, -1, -1)
-        
+
         decoded = self.transformer_decoder(tgt=queries, memory=memory)
-        fmri_chunks = self.output_projection(decoded)
+
+        # Reshape for batch norm (batch_size * seq_len, features)
+        decoded_reshaped = decoded.view(-1, decoded.shape[-1])
+        fmri_chunks = self.output_projection(decoded_reshaped)
+
+        # Reshape back and flatten
+        fmri_chunks = fmri_chunks.view(batch_size, -1, fmri_chunks.shape[-1])
         fmri = fmri_chunks.flatten(1)
-        
+
         # Ensure correct output dimension
         if fmri.shape[1] != self.output_dim:
             if fmri.shape[1] < self.output_dim:
-                padding = torch.zeros(batch_size, self.output_dim - fmri.shape[1], 
+                padding = torch.zeros(batch_size, self.output_dim - fmri.shape[1],
                                     device=fmri.device, dtype=fmri.dtype)
                 fmri = torch.cat([fmri, padding], dim=1)
             else:
                 fmri = fmri[:, :self.output_dim]
-        
+
         return fmri
 
 class DomainMatchingModule(nn.Module):
@@ -353,8 +389,21 @@ class MindBigDataLoader:
         self.stimuli_dir = Path(stimuli_dir)
         self.max_samples = max_samples
         
-        # EPOC channels
-        self.epoc_channels = ["AF3", "F7", "F3", "FC5", "T7", "P7", "O1", "O2", "P8", "T8", "FC6", "F4", "F8", "AF4"]
+        # MindBigData device channels according to specification
+        self.device_channels = {
+            "MW": ["FP1"],  # MindWave
+            "EP": ["AF3", "F7", "F3", "FC5", "T7", "P7", "O1", "O2", "P8", "T8", "FC6", "F4", "F8", "AF4"],  # EPOC
+            "MU": ["TP9", "FP1", "FP2", "TP10"],  # Muse
+            "IN": ["AF3", "AF4", "T7", "T8", "PZ"]  # Insight
+        }
+
+        # Expected sampling rates (approximate)
+        self.device_sample_rates = {
+            "MW": 512,  # ~512Hz
+            "EP": 128,  # ~128Hz
+            "MU": 220,  # ~220Hz
+            "IN": 128   # ~128Hz
+        }
         
         self.samples = []
         self.load_data()
@@ -373,21 +422,30 @@ class MindBigDataLoader:
                     
                     parts = line.strip().split('\t')
                     if len(parts) >= 7:
+                        # Parse according to MindBigData format:
+                        # [id] [event] [device] [channel] [code] [size] [data]
+                        signal_id = int(parts[0])
+                        event_id = int(parts[1])
                         device = parts[2]
-                        
-                        if device == "EP":  # EPOC device only
-                            event_id = int(parts[1])
-                            channel = parts[3]
-                            digit_code = int(parts[4])
-                            data_str = parts[6]
-                            
-                            if 0 <= digit_code <= 9 and channel in self.epoc_channels:
+                        channel = parts[3]
+                        digit_code = int(parts[4])
+                        signal_size = int(parts[5])
+                        data_str = parts[6]
+
+                        if device in self.device_channels:  # Support all MindBigData devices
+                            device_channels = self.device_channels[device]
+                            if 0 <= digit_code <= 9 and channel in device_channels:
                                 try:
                                     data_values = [float(x) for x in data_str.split(',')]
-                                    signals_by_event[event_id][channel] = {
-                                        'code': digit_code,
-                                        'data': np.array(data_values)
-                                    }
+
+                                    # Verify signal size matches actual data
+                                    if len(data_values) == signal_size:
+                                        signals_by_event[event_id][channel] = {
+                                            'code': digit_code,
+                                            'data': np.array(data_values),
+                                            'signal_id': signal_id,
+                                            'size': signal_size
+                                        }
                                 except ValueError:
                                     continue
                                     
@@ -395,50 +453,79 @@ class MindBigDataLoader:
             print(f"Error loading MindBigData: {e}")
             return
         
-        # Process events
+        # Process events - group by device type
+        events_by_device = defaultdict(list)
         for event_id, channels_data in signals_by_event.items():
-            if len(channels_data) == 14:  # All EPOC channels
-                channel_signals = []
-                digit_code = None
-                
-                for channel in self.epoc_channels:
-                    if channel in channels_data:
-                        sample = channels_data[channel]
-                        channel_signals.append(sample['data'])
-                        if digit_code is None:
-                            digit_code = sample['code']
-                    else:
+            if channels_data:
+                # Get device type from first channel
+                first_channel_data = next(iter(channels_data.values()))
+                # Determine device type by checking which channel set this belongs to
+                for device, device_channels in self.device_channels.items():
+                    if any(ch in channels_data for ch in device_channels):
+                        events_by_device[device].append((event_id, channels_data))
                         break
-                
-                if len(channel_signals) == 14 and digit_code is not None:
-                    # Fixed length processing
-                    fixed_length = 512  # 4 seconds at 128Hz
-                    processed_signals = []
-                    
-                    for signal in channel_signals:
-                        if len(signal) >= fixed_length:
-                            processed_signals.append(signal[:fixed_length])
+
+        # Process each device type separately
+        for device, events in events_by_device.items():
+            device_channels = self.device_channels[device]
+            expected_channel_count = len(device_channels)
+
+            for event_id, channels_data in events:
+                if len(channels_data) == expected_channel_count:  # All channels present
+                    channel_signals = []
+                    digit_code = None
+                    device_type = device
+
+                    for channel in device_channels:
+                        if channel in channels_data:
+                            sample = channels_data[channel]
+                            channel_signals.append(sample['data'])
+                            if digit_code is None:
+                                digit_code = sample['code']
                         else:
-                            # Pad with mean
-                            padded = np.full(fixed_length, np.mean(signal))
-                            padded[:len(signal)] = signal
-                            processed_signals.append(padded)
-                    
-                    # Load corresponding stimulus image
-                    stimulus_path = self.stimuli_dir / f"{digit_code}.jpg"
-                    if stimulus_path.exists():
-                        stimulus_image = self.load_stimulus_image(stimulus_path)
-                        
-                        self.samples.append({
-                            'eeg_data': np.array(processed_signals),
-                            'stimulus_code': digit_code,
-                            'stimulus_image': stimulus_image,
-                            'dataset_type': 'mindbigdata',
-                            'event_id': event_id
-                        })
-                        
-                        if len(self.samples) >= self.max_samples:
                             break
+
+                        # Fixed length processing for consistent tensor shapes
+                        # MindBigData signals are 2 seconds each, standardize to 256 samples
+                        target_length = 256  # Fixed length for all signals
+
+                        processed_signals = []
+
+                        for signal in channel_signals:
+                            if len(signal) >= target_length:
+                                # Take first target_length samples
+                                processed_signals.append(signal[:target_length])
+                            else:
+                                # Pad with last value (more stable than mean)
+                                padded = np.full(target_length, signal[-1] if len(signal) > 0 else 0.0)
+                                padded[:len(signal)] = signal
+                                processed_signals.append(padded)
+
+                        # Only proceed if all channels were processed successfully
+                        if len(processed_signals) != expected_channel_count:
+                            continue
+
+                        # Load corresponding stimulus image
+                        stimulus_path = self.stimuli_dir / f"{digit_code}.jpg"
+                        if stimulus_path.exists():
+                            stimulus_image = self.load_stimulus_image(stimulus_path)
+
+                            self.samples.append({
+                                'eeg_data': np.array(processed_signals),
+                                'stimulus_code': digit_code,
+                                'stimulus_image': stimulus_image,
+                                'dataset_type': 'mindbigdata',
+                                'event_id': event_id,
+                                'device': device,
+                                'num_channels': expected_channel_count,
+                                'signal_length': target_length
+                            })
+
+                            if len(self.samples) >= self.max_samples:
+                                break
+
+                if len(self.samples) >= self.max_samples:
+                    break
         
         print(f"Loaded {len(self.samples)} MindBigData samples")
     
@@ -469,55 +556,74 @@ class CrellDataLoader:
         self.load_data()
         
     def load_data(self):
-        """Load Crell samples"""
+        """Load Crell samples - focus on visual phases only"""
         print(f"Loading Crell data from {self.filepath}...")
-        
+
         try:
             data = scipy.io.loadmat(self.filepath)
-            
-            for paradigm_key in ['round01_paradigm', 'round02_paradigm']:
+
+            # Debug: Print available keys
+            print(f"  Available keys in .mat file: {list(data.keys())}")
+
+            # Try different possible paradigm key formats
+            possible_keys = ['paradigm_one', 'paradigm_two', 'round01_paradigm', 'round02_paradigm']
+            found_keys = [key for key in possible_keys if key in data]
+
+            if not found_keys:
+                print(f"  Warning: No paradigm keys found. Available keys: {list(data.keys())}")
+                return
+
+            print(f"  Found paradigm keys: {found_keys}")
+
+            # Correct paradigm keys according to Crell specification
+            for paradigm_key in found_keys:
                 if paradigm_key not in data:
                     continue
-                
+
                 paradigm_data = data[paradigm_key]
                 if len(paradigm_data) == 0:
                     continue
-                
+
                 round_data = paradigm_data[0, 0]
-                
+
                 if 'BrainVisionRDA_data' not in round_data.dtype.names:
                     continue
-                
-                # Extract data
-                eeg_data = round_data['BrainVisionRDA_data'].T  # (64, timepoints)
+
+                # Extract data according to Crell specification
+                eeg_data = round_data['BrainVisionRDA_data'].T  # (64, timepoints) at 500Hz
                 eeg_times = round_data['BrainVisionRDA_time'].flatten()
                 marker_data = round_data['ParadigmMarker_data'].flatten()
                 marker_times = round_data['ParadigmMarker_time'].flatten()
-                
-                # Extract visual epochs
+
+                print(f"  Processing {paradigm_key}: {eeg_data.shape[1]} timepoints, {len(marker_data)} markers")
+
+                # Extract visual epochs (only visual presentation phases)
                 visual_epochs = self.extract_visual_epochs(
                     eeg_data, eeg_times, marker_data, marker_times
                 )
-                
-                for epoch_data, letter_code in visual_epochs:
+
+                for epoch_data, letter_code, phase_info in visual_epochs:
                     letter = list(self.letter_mapping.values())[letter_code]
-                    
+
                     # Load corresponding stimulus
                     stimulus_path = self.stimuli_dir / f"{letter}.png"
                     if stimulus_path.exists():
                         stimulus_image = self.load_stimulus_image(stimulus_path)
-                        
+
                         self.samples.append({
                             'eeg_data': epoch_data,
                             'stimulus_code': letter_code,
                             'stimulus_image': stimulus_image,
                             'dataset_type': 'crell',
-                            'letter': letter
+                            'letter': letter,
+                            'phase': phase_info['phase'],
+                            'duration': phase_info['duration'],
+                            'paradigm_round': paradigm_key
                         })
-                        
+
                         if len(self.samples) >= self.max_samples:
                             break
-                
+
                 if len(self.samples) >= self.max_samples:
                     break
                     
@@ -528,66 +634,118 @@ class CrellDataLoader:
         print(f"Loaded {len(self.samples)} Crell samples")
     
     def extract_visual_epochs(self, eeg_data, eeg_times, marker_data, marker_times):
-        """Extract visual epochs from Crell data"""
+        """Extract visual epochs from Crell data - focus on visual presentation only"""
         epochs = []
-        
-        # Find letter presentation events
+
+        # Parse markers according to Crell specification
         letter_events = []
+        current_letter_code = None
         current_letter = None
         fade_in_time = None
-        fade_out_time = None
-        
+        fade_in_complete_time = None
+        fade_out_start_time = None
+        fade_out_complete_time = None
+
         for marker, marker_time in zip(marker_data, marker_times):
-            if marker >= 100:  # Letter code
+            if marker >= 100:  # Letter code (100+ascii_index)
+                current_letter_code = marker
                 current_letter = self.letter_mapping.get(marker, None)
-            elif marker == 1:  # Fade in start
+            elif marker == 1:  # Target letter starts to fade in
                 fade_in_time = marker_time
-            elif marker == 3:  # Fade out start
-                fade_out_time = marker_time
-                
-                if current_letter is not None and fade_in_time is not None:
+            elif marker == 2:  # Target letter is completely faded in
+                fade_in_complete_time = marker_time
+            elif marker == 3:  # Target letter starts to fade out
+                fade_out_start_time = marker_time
+            elif marker == 4:  # Target letter is completely faded out (start of writing phase)
+                fade_out_complete_time = marker_time
+
+                # We focus on VISUAL phases only (not motor/writing phases)
+                if (current_letter is not None and fade_in_time is not None and
+                    fade_in_complete_time is not None and fade_out_start_time is not None):
+
+                    # Extract different visual phases
+                    phases = [
+                        {
+                            'phase': 'fade_in',
+                            'start_time': fade_in_time,
+                            'end_time': fade_in_complete_time,
+                            'duration': fade_in_complete_time - fade_in_time
+                        },
+                        {
+                            'phase': 'full_visibility',
+                            'start_time': fade_in_complete_time,
+                            'end_time': fade_out_start_time,
+                            'duration': fade_out_start_time - fade_in_complete_time
+                        },
+                        {
+                            'phase': 'fade_out',
+                            'start_time': fade_out_start_time,
+                            'end_time': fade_out_complete_time,
+                            'duration': fade_out_complete_time - fade_out_start_time
+                        }
+                    ]
+
+                    # For this implementation, we'll use the full visual presentation
+                    # (from fade_in start to fade_out complete)
                     letter_events.append({
                         'letter': current_letter,
+                        'letter_code': current_letter_code,
                         'start_time': fade_in_time,
-                        'end_time': fade_out_time
+                        'end_time': fade_out_complete_time,
+                        'phases': phases,
+                        'total_duration': fade_out_complete_time - fade_in_time
                     })
-                
-                # Reset
+
+                # Reset for next letter
+                current_letter_code = None
                 current_letter = None
                 fade_in_time = None
-                fade_out_time = None
-        
-        # Extract EEG epochs
+                fade_in_complete_time = None
+                fade_out_start_time = None
+                fade_out_complete_time = None
+
+        print(f"    Found {len(letter_events)} visual letter events")
+
+        # Extract EEG epochs for visual phases
         for event in letter_events[:self.max_samples]:
             start_time = event['start_time']
             end_time = event['end_time']
-            
+
             start_idx = np.searchsorted(eeg_times, start_time)
             end_idx = np.searchsorted(eeg_times, end_time)
-            
+
             if end_idx > start_idx and (end_idx - start_idx) > 100:
                 epoch_data = eeg_data[:, start_idx:end_idx]
-                
-                # Resample to fixed length
-                target_length = 1000  # 2 seconds at 500Hz
-                if epoch_data.shape[1] != target_length:
-                    old_indices = np.linspace(0, epoch_data.shape[1]-1, epoch_data.shape[1])
-                    new_indices = np.linspace(0, epoch_data.shape[1]-1, target_length)
-                    
-                    resampled_epoch = np.zeros((64, target_length))
+
+                # Fixed length processing for consistent tensor shapes
+                # Visual presentation is ~4.5s (2s fade_in + 0.5s full + 2s fade_out)
+                target_length = 2250  # 4.5 seconds at 500Hz
+
+                if epoch_data.shape[1] >= target_length:
+                    # Take first target_length samples
+                    epoch_data = epoch_data[:, :target_length]
+                else:
+                    # Pad with last values if shorter
+                    padded_epoch = np.zeros((64, target_length))
+                    padded_epoch[:, :epoch_data.shape[1]] = epoch_data
+                    # Pad remaining with last column values
                     for ch in range(64):
-                        f = interp1d(old_indices, epoch_data[ch, :], kind='linear')
-                        resampled_epoch[ch, :] = f(new_indices)
-                    
-                    epoch_data = resampled_epoch
-                
+                        padded_epoch[ch, epoch_data.shape[1]:] = epoch_data[ch, -1]
+                    epoch_data = padded_epoch
+
                 # Convert letter to numeric
                 letter_to_num = {'a': 0, 'd': 1, 'e': 2, 'f': 3, 'j': 4,
                                'n': 5, 'o': 6, 's': 7, 't': 8, 'v': 9}
                 letter_label = letter_to_num.get(event['letter'], 0)
-                
-                epochs.append((epoch_data, letter_label))
-        
+
+                phase_info = {
+                    'phase': 'visual_presentation',
+                    'duration': event['total_duration'],
+                    'letter_code': event['letter_code']
+                }
+
+                epochs.append((epoch_data, letter_label, phase_info))
+
         return epochs
     
     def load_stimulus_image(self, image_path: Path) -> np.ndarray:
@@ -612,19 +770,25 @@ class EEGFMRIDataset(Dataset):
     
     def __getitem__(self, idx):
         sample = self.samples[idx]
-        
+
         # EEG data
         eeg_data = torch.tensor(sample['eeg_data'], dtype=torch.float32)
-        
-        # Normalize EEG
-        eeg_data = (eeg_data - eeg_data.mean()) / (eeg_data.std() + 1e-8)
-        
+
+        # Better EEG normalization with clipping
+        eeg_mean = eeg_data.mean()
+        eeg_std = eeg_data.std()
+
+        # Prevent division by zero and extreme values
+        eeg_std = torch.clamp(eeg_std, min=1e-6)
+        eeg_data = (eeg_data - eeg_mean) / eeg_std
+        eeg_data = torch.clamp(eeg_data, -3.0, 3.0)  # Clip to 3 standard deviations
+
         # Stimulus image (used to create synthetic fMRI for training)
         stimulus_image = torch.tensor(sample['stimulus_image'], dtype=torch.float32)
-        
+
         # Create synthetic fMRI target (placeholder - in real scenario would be real fMRI)
         synthetic_fmri_target = self.create_synthetic_fmri_target(stimulus_image)
-        
+
         return {
             'eeg_data': eeg_data,
             'stimulus_image': stimulus_image,
@@ -637,165 +801,194 @@ class EEGFMRIDataset(Dataset):
         """Create synthetic fMRI target from stimulus image (placeholder)"""
         # This is a placeholder - in real scenario, you'd have real fMRI data
         # Here we create a simple encoding based on stimulus features
-        
-        # Simple encoding based on image statistics
-        mean_intensity = stimulus_image.mean()
-        std_intensity = stimulus_image.std()
-        
-        # Create pseudo-fMRI based on image features
-        fmri_target = torch.randn(15724) * 0.1  # Base noise
-        
-        # Add patterns based on stimulus
-        fmri_target[:1000] += mean_intensity * 0.5  # Visual areas
-        fmri_target[1000:2000] += std_intensity * 0.3  # Processing areas
-        
+
+        # Simple encoding based on image statistics with better numerical stability
+        mean_intensity = torch.clamp(stimulus_image.mean(), 0.0, 1.0)
+        std_intensity = torch.clamp(stimulus_image.std(), 0.0, 1.0)
+
+        # Create pseudo-fMRI based on image features with smaller values
+        fmri_target = torch.randn(15724) * 0.01  # Reduced base noise
+
+        # Add patterns based on stimulus with smaller coefficients
+        fmri_target[:1000] += mean_intensity * 0.1  # Visual areas
+        fmri_target[1000:2000] += std_intensity * 0.05  # Processing areas
+
+        # Clamp to reasonable range
+        fmri_target = torch.clamp(fmri_target, -1.0, 1.0)
+
         return fmri_target
 
 # Training and evaluation functions
-def create_data_loaders(datasets_dir: str, batch_size: int = 8) -> Tuple[DataLoader, DataLoader]:
-    """Create data loaders for MindBigData and Crell"""
-    
+def create_data_loaders(datasets_dir: str, batch_size: int = 8) -> Tuple[Dict[str, DataLoader], Dict[str, DataLoader]]:
+    """Create separate data loaders for MindBigData and Crell"""
+
     datasets_path = Path(datasets_dir)
-    
+
     # Load MindBigData
     mindbig_loader = MindBigDataLoader(
         filepath=str(datasets_path / "EP1.01.txt"),
         stimuli_dir=str(datasets_path / "MindbigdataStimuli"),
         max_samples=50
     )
-    
+
     # Load Crell
     crell_loader = CrellDataLoader(
         filepath=str(datasets_path / "S01.mat"),
         stimuli_dir=str(datasets_path / "crellStimuli"),
         max_samples=50
     )
-    
-    # Combine samples
-    all_samples = mindbig_loader.samples + crell_loader.samples
-    
-    # Split train/val
-    train_samples = all_samples[:int(0.8 * len(all_samples))]
-    val_samples = all_samples[int(0.8 * len(all_samples)):]
-    
-    # Create datasets
-    train_dataset = EEGFMRIDataset(train_samples)
-    val_dataset = EEGFMRIDataset(val_samples)
-    
-    # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-    
-    print(f"✓ Created data loaders:")
-    print(f"  Train samples: {len(train_samples)}")
-    print(f"  Val samples: {len(val_samples)}")
-    print(f"  MindBigData: {len(mindbig_loader.samples)} samples")
-    print(f"  Crell: {len(crell_loader.samples)} samples")
-    
-    return train_loader, val_loader
 
-def train_ntvit_model(datasets_dir: str, 
+    # Split MindBigData samples
+    mindbig_samples = mindbig_loader.samples
+    mindbig_train = mindbig_samples[:int(0.8 * len(mindbig_samples))]
+    mindbig_val = mindbig_samples[int(0.8 * len(mindbig_samples)):]
+
+    # Split Crell samples
+    crell_samples = crell_loader.samples
+    crell_train = crell_samples[:int(0.8 * len(crell_samples))]
+    crell_val = crell_samples[int(0.8 * len(crell_samples)):]
+
+    # Create separate datasets
+    mindbig_train_dataset = EEGFMRIDataset(mindbig_train)
+    mindbig_val_dataset = EEGFMRIDataset(mindbig_val)
+    crell_train_dataset = EEGFMRIDataset(crell_train)
+    crell_val_dataset = EEGFMRIDataset(crell_val)
+
+    # Create separate data loaders
+    train_loaders = {
+        'mindbigdata': DataLoader(mindbig_train_dataset, batch_size=batch_size, shuffle=True),
+        'crell': DataLoader(crell_train_dataset, batch_size=batch_size, shuffle=True)
+    }
+
+    val_loaders = {
+        'mindbigdata': DataLoader(mindbig_val_dataset, batch_size=batch_size, shuffle=False),
+        'crell': DataLoader(crell_val_dataset, batch_size=batch_size, shuffle=False)
+    }
+
+    print(f"✓ Created separate data loaders:")
+    print(f"  MindBigData - Train: {len(mindbig_train)}, Val: {len(mindbig_val)}")
+    print(f"  Crell - Train: {len(crell_train)}, Val: {len(crell_val)}")
+
+    return train_loaders, val_loaders
+
+def train_ntvit_model(datasets_dir: str,
                      output_dir: str = "outputs",
                      num_epochs: int = 50,
                      device: str = 'cuda'):
     """Complete training pipeline untuk NT-ViT"""
-    
+
     print("🧠 NT-ViT Training Pipeline")
     print("=" * 50)
-    
+
     # Create output directory
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
-    
+
     # Load data
-    train_loader, val_loader = create_data_loaders(datasets_dir, batch_size=4)
-    
+    train_loaders, val_loaders = create_data_loaders(datasets_dir, batch_size=4)
+
+    # Determine channel count from loaded data
+    mindbig_channels = 14  # Default EPOC
+    if train_loaders['mindbigdata'].dataset.samples:
+        sample = train_loaders['mindbigdata'].dataset.samples[0]
+        mindbig_channels = sample['num_channels']
+
     # Create models untuk both datasets
-    mindbig_model = NTViTEEGToFMRI(eeg_channels=14).to(device)
+    mindbig_model = NTViTEEGToFMRI(eeg_channels=mindbig_channels).to(device)
     crell_model = NTViTEEGToFMRI(eeg_channels=64).to(device)
-    
-    # Optimizers
-    mindbig_optimizer = torch.optim.AdamW(mindbig_model.parameters(), lr=1e-4)
-    crell_optimizer = torch.optim.AdamW(crell_model.parameters(), lr=1e-4)
-    
+
+    print(f"  MindBigData model: {mindbig_channels} channels")
+    print(f"  Crell model: 64 channels")
+
+    # Optimizers with lower learning rate
+    mindbig_optimizer = torch.optim.AdamW(mindbig_model.parameters(), lr=1e-5, weight_decay=1e-4)
+    crell_optimizer = torch.optim.AdamW(crell_model.parameters(), lr=1e-5, weight_decay=1e-4)
+
     # Training loop
     for epoch in range(num_epochs):
         print(f"\nEpoch {epoch+1}/{num_epochs}")
-        
+
         # Training
         mindbig_model.train()
         crell_model.train()
-        
+
         epoch_losses = {'mindbigdata': [], 'crell': []}
-        
-        for batch_idx, batch in enumerate(train_loader):
+
+        # Train MindBigData model
+        for batch_idx, batch in enumerate(train_loaders['mindbigdata']):
             eeg_data = batch['eeg_data'].to(device)
             target_fmri = batch['synthetic_fmri_target'].to(device)
-            dataset_types = batch['dataset_type']
-            
-            # Separate batch by dataset type
-            mindbig_mask = [dt == 'mindbigdata' for dt in dataset_types]
-            crell_mask = [dt == 'crell' for dt in dataset_types]
-            
-            # Train MindBigData model
-            if any(mindbig_mask):
-                mindbig_indices = [i for i, mask in enumerate(mindbig_mask) if mask]
-                mindbig_eeg = eeg_data[mindbig_indices]
-                mindbig_target = target_fmri[mindbig_indices]
-                
-                mindbig_optimizer.zero_grad()
-                outputs = mindbig_model(mindbig_eeg, mindbig_target)
-                
-                recon_loss = F.mse_loss(outputs['synthetic_fmri'], mindbig_target)
-                domain_loss = outputs.get('domain_alignment_loss', torch.tensor(0.0, device=device))
-                total_loss = recon_loss + 0.1 * domain_loss
-                
-                total_loss.backward()
-                mindbig_optimizer.step()
-                
-                epoch_losses['mindbigdata'].append(total_loss.item())
-            
-            # Train Crell model
-            if any(crell_mask):
-                crell_indices = [i for i, mask in enumerate(crell_mask) if mask]
-                crell_eeg = eeg_data[crell_indices]
-                crell_target = target_fmri[crell_indices]
-                
-                crell_optimizer.zero_grad()
-                outputs = crell_model(crell_eeg, crell_target)
-                
-                recon_loss = F.mse_loss(outputs['synthetic_fmri'], crell_target)
-                domain_loss = outputs.get('domain_alignment_loss', torch.tensor(0.0, device=device))
-                total_loss = recon_loss + 0.1 * domain_loss
-                
-                total_loss.backward()
-                crell_optimizer.step()
-                
-                epoch_losses['crell'].append(total_loss.item())
-        
+
+            mindbig_optimizer.zero_grad()
+            outputs = mindbig_model(eeg_data, target_fmri)
+
+            recon_loss = F.mse_loss(outputs['synthetic_fmri'], target_fmri)
+            domain_loss = outputs.get('domain_alignment_loss', torch.tensor(0.0, device=device))
+            total_loss = recon_loss + 0.1 * domain_loss
+
+            # Check for NaN
+            if torch.isnan(total_loss):
+                print(f"  Warning: NaN loss detected in MindBigData batch {batch_idx}, skipping...")
+                continue
+
+            total_loss.backward()
+
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(mindbig_model.parameters(), max_norm=1.0)
+
+            mindbig_optimizer.step()
+
+            epoch_losses['mindbigdata'].append(total_loss.item())
+
+        # Train Crell model
+        for batch_idx, batch in enumerate(train_loaders['crell']):
+            eeg_data = batch['eeg_data'].to(device)
+            target_fmri = batch['synthetic_fmri_target'].to(device)
+
+            crell_optimizer.zero_grad()
+            outputs = crell_model(eeg_data, target_fmri)
+
+            recon_loss = F.mse_loss(outputs['synthetic_fmri'], target_fmri)
+            domain_loss = outputs.get('domain_alignment_loss', torch.tensor(0.0, device=device))
+            total_loss = recon_loss + 0.1 * domain_loss
+
+            # Check for NaN
+            if torch.isnan(total_loss):
+                print(f"  Warning: NaN loss detected in Crell batch {batch_idx}, skipping...")
+                continue
+
+            total_loss.backward()
+
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(crell_model.parameters(), max_norm=1.0)
+
+            crell_optimizer.step()
+
+            epoch_losses['crell'].append(total_loss.item())
+
         # Print epoch results
         if epoch_losses['mindbigdata']:
             avg_mindbig_loss = np.mean(epoch_losses['mindbigdata'])
             print(f"  MindBigData loss: {avg_mindbig_loss:.4f}")
-        
+
         if epoch_losses['crell']:
             avg_crell_loss = np.mean(epoch_losses['crell'])
             print(f"  Crell loss: {avg_crell_loss:.4f}")
-        
+
         # Save models every 10 epochs
         if (epoch + 1) % 10 == 0:
-            torch.save(mindbig_model.state_dict(), 
+            torch.save(mindbig_model.state_dict(),
                       output_path / f"ntvit_mindbigdata_epoch_{epoch+1}.pth")
-            torch.save(crell_model.state_dict(), 
+            torch.save(crell_model.state_dict(),
                       output_path / f"ntvit_crell_epoch_{epoch+1}.pth")
             print(f"  ✓ Saved model checkpoints")
-    
+
     # Final model save
     torch.save(mindbig_model.state_dict(), output_path / "ntvit_mindbigdata_final.pth")
     torch.save(crell_model.state_dict(), output_path / "ntvit_crell_final.pth")
-    
+
     print(f"\n✅ Training complete! Models saved to {output_path}")
-    
+
     return mindbig_model, crell_model
 
 def generate_synthetic_fmri(model: NTViTEEGToFMRI,
@@ -899,8 +1092,8 @@ def main():
         mindbig_model, test_eeg_mindbig, output_dir, "mindbigdata"
     )
     
-    # Test Crell model
-    test_eeg_crell = torch.randn(3, 64, 1000).to(device)
+    # Test Crell model - updated for new visual epoch length
+    test_eeg_crell = torch.randn(3, 64, 2250).to(device)  # 4.5 seconds at 500Hz
     generate_synthetic_fmri(
         crell_model, test_eeg_crell, output_dir, "crell"
     )
